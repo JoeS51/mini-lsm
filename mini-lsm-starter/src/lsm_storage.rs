@@ -298,10 +298,24 @@ impl LsmStorageInner {
 
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        match self.state.read().memtable.get(key) {
-            Some(val) if val.is_empty() => Ok(None),
-            res => Ok(res),
+        let state = self.state.read().clone();
+        if let Some(val) = state.memtable.get(key) {
+            if val.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(val));
         }
+
+        for memtable in &state.imm_memtables {
+            if let Some(val) = memtable.get(key) {
+                if val.is_empty() {
+                    return Ok(None);
+                }
+                return Ok(Some(val));
+            }
+        }
+
+        Ok(None)
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
@@ -311,14 +325,17 @@ impl LsmStorageInner {
 
     /// Put a key-value pair into the storage by writing into the current memtable.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        let state = self.state.read();
-        state.memtable.put(key, value)?;
+        let memtable = {
+            let state = self.state.read();
+            state.memtable.clone()
+        };
 
+        memtable.put(key, value)?;
         // Freeze memtable if it reaches capacity
-        if state.memtable.approximate_size() >= self.options.target_sst_size {
+        if memtable.approximate_size() >= self.options.target_sst_size {
             let state_lock = self.state_lock.lock();
             // Prevent race condition and writing memtable twice
-            if state.memtable.approximate_size() >= self.options.target_sst_size {
+            if self.state.read().memtable.approximate_size() >= self.options.target_sst_size {
                 self.force_freeze_memtable(&state_lock)?
             }
         }
@@ -327,12 +344,15 @@ impl LsmStorageInner {
 
     /// Remove a key from the storage by writing an empty value.
     pub fn delete(&self, key: &[u8]) -> Result<()> {
-        let state = self.state.read();
-        state.memtable.put(key, &[])?;
+        let memtable = {
+            let state = self.state.read();
+            state.memtable.clone()
+        };
 
-        if state.memtable.approximate_size() >= self.options.target_sst_size {
+        memtable.put(key, &[])?;
+        if memtable.approximate_size() >= self.options.target_sst_size {
             let state_lock = self.state_lock.lock();
-            if state.memtable.approximate_size() >= self.options.target_sst_size {
+            if self.state.read().memtable.approximate_size() >= self.options.target_sst_size {
                 self.force_freeze_memtable(&state_lock)?
             }
         }
@@ -365,6 +385,8 @@ impl LsmStorageInner {
         new_state
             .imm_memtables
             .insert(0, new_state.memtable.clone());
+        new_state.memtable = Arc::new(MemTable::create(self.next_sst_id()));
+        *self.state.write() = Arc::new(new_state);
         Ok(())
     }
 
