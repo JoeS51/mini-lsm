@@ -59,7 +59,19 @@ pub struct MergeIterator<I: StorageIterator> {
 
 impl<I: StorageIterator> MergeIterator<I> {
     pub fn create(iters: Vec<Box<I>>) -> Self {
-        unimplemented!()
+        let mut heap = BinaryHeap::new();
+        for (i, iter) in iters.into_iter().enumerate() {
+            let curr_heapwrapper = HeapWrapper(i, iter);
+            heap.push(curr_heapwrapper);
+        }
+
+        let current = heap.pop();
+        let merge_iterator = MergeIterator {
+            iters: heap,
+            current,
+        };
+
+        merge_iterator
     }
 }
 
@@ -69,18 +81,45 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     type KeyType<'a> = KeySlice<'a>;
 
     fn key(&self) -> KeySlice<'_> {
-        unimplemented!()
+        self.current.as_ref().unwrap().1.key()
     }
 
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        self.current.as_ref().unwrap().1.value()
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        self.current != None
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        let result = {
+            let mut inner = self.iters.peek_mut().unwrap();
+            inner.1.next();
+            if !inner.1.is_valid() {
+                PeekMut::pop(inner);
+            }
+        };
+        result?;
+
+        let mut new_current = match self.iters.pop() {
+            Some(val) => val,
+            None => {
+                self.current = None;
+                return Ok(());
+            }
+        };
+
+        while self.current.as_ref().unwrap().1.key() == new_current.1.key() {
+            new_current = match self.iters.pop() {
+                Some(val) => val,
+                None => {
+                    self.current = None;
+                    return Ok(());
+                }
+            };
+        }
+        self.current = Some(new_current);
+        Ok(())
     }
 }
