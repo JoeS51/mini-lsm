@@ -17,6 +17,7 @@
 
 use std::cmp::{self};
 use std::collections::BinaryHeap;
+use std::collections::binary_heap::PeekMut;
 
 use anyhow::Result;
 
@@ -93,33 +94,34 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     }
 
     fn next(&mut self) -> Result<()> {
-        let result = {
-            let mut inner = self.iters.peek_mut().unwrap();
-            inner.1.next();
-            if !inner.1.is_valid() {
-                PeekMut::pop(inner);
+        while let Some(mut inner_iter) = self.iters.peek_mut() {
+            if inner_iter.1.key() != self.current.as_ref().unwrap().1.key() {
+                break;
             }
-        };
-        result?;
-
-        let mut new_current = match self.iters.pop() {
-            Some(val) => val,
-            None => {
-                self.current = None;
-                return Ok(());
-            }
-        };
-
-        while self.current.as_ref().unwrap().1.key() == new_current.1.key() {
-            new_current = match self.iters.pop() {
-                Some(val) => val,
-                None => {
-                    self.current = None;
-                    return Ok(());
+            match inner_iter.1.next() {
+                Ok(()) if !inner_iter.1.is_valid() => {
+                    PeekMut::pop(inner_iter);
                 }
-            };
+                Ok(()) => {}
+                Err(e) => {
+                    PeekMut::pop(inner_iter);
+                    return Err(e);
+                }
+            }
         }
-        self.current = Some(new_current);
+        self.current.as_mut().unwrap().1.next()?;
+        if !self.current.as_ref().unwrap().1.is_valid() {
+            self.current = self.iters.pop();
+            return Ok(());
+        }
+
+        let current = self.current.as_mut().unwrap();
+        if let Some(mut inner_iter) = self.iters.peek_mut() {
+            if *current < *inner_iter {
+                std::mem::swap(&mut *inner_iter, current);
+            }
+        }
+
         Ok(())
     }
 }
