@@ -62,6 +62,9 @@ impl<I: StorageIterator> MergeIterator<I> {
     pub fn create(iters: Vec<Box<I>>) -> Self {
         let mut heap = BinaryHeap::new();
         for (i, iter) in iters.into_iter().enumerate() {
+            if !iter.is_valid() {
+                continue;
+            }
             let curr_heapwrapper = HeapWrapper(i, iter);
             heap.push(curr_heapwrapper);
         }
@@ -94,6 +97,9 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     }
 
     fn next(&mut self) -> Result<()> {
+        if self.current == None {
+            return Ok(());
+        }
         while let Some(mut inner_iter) = self.iters.peek_mut() {
             if inner_iter.1.key() != self.current.as_ref().unwrap().1.key() {
                 break;

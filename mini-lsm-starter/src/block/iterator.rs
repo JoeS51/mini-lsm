@@ -48,7 +48,9 @@ impl BlockIterator {
 
     /// Creates a block iterator and seek to the first entry.
     pub fn create_and_seek_to_first(block: Arc<Block>) -> Self {
-        unimplemented!()
+        let mut block_iter = BlockIterator::new(block.clone());
+        block_iter.seek_to_first();
+        block_iter
     }
 
     /// Creates a block iterator and seek to the first key that >= `key`.
@@ -58,34 +60,91 @@ impl BlockIterator {
 
     /// Returns the key of the current entry.
     pub fn key(&self) -> KeySlice<'_> {
-        unimplemented!()
+        self.key.as_key_slice()
     }
 
     /// Returns the value of the current entry.
     pub fn value(&self) -> &[u8] {
-        unimplemented!()
+        &self.block.data[self.value_range.0..self.value_range.1]
     }
 
     /// Returns true if the iterator is valid.
     /// Note: You may want to make use of `key`
     pub fn is_valid(&self) -> bool {
-        unimplemented!()
+        self.idx < self.block.offsets.len()
     }
 
     /// Seeks to the first key in the block.
     pub fn seek_to_first(&mut self) {
-        unimplemented!()
+        self.idx = 0;
+        let (key_vec, start, end) = {
+            let (key, _, (start, end)) = self.get_block_entry(self.idx);
+            (key.to_vec(), start, end)
+        };
+        self.key = KeyVec::from_vec(key_vec.to_vec());
+        self.first_key = KeyVec::from_vec(key_vec.to_vec());
+        self.value_range = (start, end);
+    }
+
+    fn get_block_entry(&self, index: usize) -> (&[u8], &[u8], (usize, usize)) {
+        let offset = self.block.offsets[index] as usize;
+        let key_size_bytes = [self.block.data[offset], self.block.data[offset + 1]];
+        let key_size = u16::from_le_bytes(key_size_bytes) as usize;
+        let key_bytes = &self.block.data[offset + 2..offset + 2 + key_size];
+
+        let value_offset = offset + 2 + key_size;
+        let value_size_bytes = [
+            self.block.data[value_offset],
+            self.block.data[value_offset + 1],
+        ];
+        let value_size = u16::from_le_bytes(value_size_bytes) as usize;
+        let value_bytes = &self.block.data[value_offset + 2..value_offset + 2 + value_size];
+
+        (
+            key_bytes,
+            value_bytes,
+            (value_offset + 2, value_offset + 2 + value_size),
+        )
     }
 
     /// Move to the next key in the block.
     pub fn next(&mut self) {
-        unimplemented!()
+        self.idx += 1;
+        if !self.is_valid() {
+            self.key = KeyVec::from_vec(Vec::new());
+            return;
+        }
+        let (key, val, (start, end)) = self.get_block_entry(self.idx);
+        self.key = KeyVec::from_vec(key.to_vec());
+        self.value_range = (start, end);
     }
 
     /// Seek to the first key that >= `key`.
     /// Note: You should assume the key-value pairs in the block are sorted when being added by
     /// callers.
     pub fn seek_to_key(&mut self, key: KeySlice) {
-        unimplemented!()
+        let mut lo = 0;
+        let mut hi = self.block.offsets.len();
+        while lo < hi {
+            let mid_idx = (lo + hi) / 2;
+            let (mid_key, _, (_, _)) = self.get_block_entry(mid_idx);
+            if KeySlice::from_slice(mid_key) < key {
+                lo = mid_idx + 1;
+            } else {
+                hi = mid_idx;
+            }
+        }
+        if lo == self.block.offsets.len() {
+            self.key = KeyVec::from_vec(Vec::new());
+            return;
+        }
+        self.idx = lo;
+        let (key_vec, start, end) = {
+            let (key, _, (start, end)) = self.get_block_entry(self.idx);
+            (key.to_vec(), start, end)
+        };
+        self.key = KeyVec::from_vec(key_vec.to_vec());
+        self.first_key = KeyVec::from_vec(key_vec.to_vec());
+        self.value_range = (start, end);
     }
 }
