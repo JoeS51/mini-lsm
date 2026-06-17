@@ -55,7 +55,9 @@ impl BlockIterator {
 
     /// Creates a block iterator and seek to the first key that >= `key`.
     pub fn create_and_seek_to_key(block: Arc<Block>, key: KeySlice) -> Self {
-        unimplemented!()
+        let mut block_iter = BlockIterator::new(block.clone());
+        block_iter.seek_to_key(key);
+        block_iter
     }
 
     /// Returns the key of the current entry.

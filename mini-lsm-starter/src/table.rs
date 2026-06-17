@@ -53,12 +53,38 @@ impl BlockMeta {
         #[allow(clippy::ptr_arg)] // remove this allow after you finish
         buf: &mut Vec<u8>,
     ) {
-        unimplemented!()
+        let num_block_meta = block_meta.len() as u32;
+        buf.extend_from_slice(&num_block_meta.to_le_bytes());
+        for meta in block_meta {
+            let curr_offset = meta.offset as u32;
+            buf.extend_from_slice(&curr_offset.to_le_bytes());
+            let first_key_len = meta.first_key.len() as u32;
+            buf.extend_from_slice(&first_key_len.to_le_bytes());
+            buf.extend_from_slice(meta.first_key.as_key_slice().raw_ref());
+            let last_key_len = meta.last_key.len() as u32;
+            buf.extend_from_slice(&last_key_len.to_le_bytes());
+            buf.extend_from_slice(meta.last_key.as_key_slice().raw_ref());
+        }
     }
 
     /// Decode block meta from a buffer.
-    pub fn decode_block_meta(buf: impl Buf) -> Vec<BlockMeta> {
-        unimplemented!()
+    pub fn decode_block_meta(mut buf: impl Buf) -> Vec<BlockMeta> {
+        let mut res = Vec::new();
+        let size = buf.get_u32();
+        for _ in 0..size {
+            let curr_offset = buf.get_u32() as usize;
+            let first_key_len = buf.get_u32() as usize;
+            let curr_first_key = buf.copy_to_bytes(first_key_len);
+            let last_key_len = buf.get_u32() as usize;
+            let curr_last_key = buf.copy_to_bytes(last_key_len);
+            let curr_block_meta = BlockMeta {
+                offset: curr_offset,
+                first_key: KeyBytes::from_bytes(curr_first_key),
+                last_key: KeyBytes::from_bytes(curr_last_key),
+            };
+            res.push(curr_block_meta);
+        }
+        res
     }
 }
 
