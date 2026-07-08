@@ -15,12 +15,12 @@
 #![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
+use std::path::Path;
 use std::sync::Arc;
-use std::{fs::Metadata, path::Path};
 
 use anyhow::Result;
 
-use super::{BlockMeta, SsTable};
+use super::{BlockMeta, FileObject, SsTable};
 use crate::{block::BlockBuilder, key::KeyBytes, key::KeySlice, lsm_storage::BlockCache};
 
 /// Builds an SSTable from key-value pairs.
@@ -90,6 +90,34 @@ impl SsTableBuilder {
         block_cache: Option<Arc<BlockCache>>,
         path: impl AsRef<Path>,
     ) -> Result<SsTable> {
+        if !self.builder.is_empty() {
+            let old_first_key = std::mem::replace(&mut self.first_key, Vec::new());
+            let old_last_key = std::mem::replace(&mut self.last_key, Vec::new());
+            self.meta.push(BlockMeta {
+                offset: self.data.len(),
+                first_key: KeyBytes::from_bytes(old_first_key.into()),
+                last_key: KeyBytes::from_bytes(old_last_key.into()),
+            });
+            self.data.extend_from_slice(&self.builder.build().encode());
+        }
+
+        let mut data = self.data;
+        let block_meta_offset = data.len();
+        BlockMeta::encode_block_meta(&self.meta, &mut data);
+        data.extend_from_slice(&(block_meta_offset as u32).to_le_bytes());
+
+        let file = FileObject::create(path.as_ref(), data)?;
+        Ok(SsTable {
+            file,
+            block_meta: self.meta.clone(),
+            block_meta_offset,
+            id,
+            block_cache,
+            first_key: self.meta.first().unwrap().first_key.clone(),
+            last_key: self.meta.last().unwrap().last_key.clone(),
+            bloom: None,
+            max_ts: 0,
+        })
     }
 
     #[cfg(test)]
