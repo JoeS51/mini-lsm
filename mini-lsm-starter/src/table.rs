@@ -201,16 +201,12 @@ impl SsTable {
     /// Read a block from disk, with block cache. (Day 4)
     pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
         let key = (self.id, block_idx);
-        if !self.block_cache.is_none() && self.block_cache.as_ref().unwrap().contains_key(&key) {
-            return Ok(self.block_cache.as_ref().unwrap().get(&key).unwrap());
+        match self.block_cache.as_ref() {
+            None => self.read_block(block_idx),
+            Some(cache) => cache
+                .try_get_with(key, || self.read_block(block_idx))
+                .map_err(|err| anyhow::anyhow!("{}", err)),
         }
-
-        let block = self.read_block(block_idx)?;
-        self.block_cache
-            .as_ref()
-            .unwrap()
-            .insert(key, block.clone());
-        Ok(block)
     }
 
     /// Find the block that may contain `key`.

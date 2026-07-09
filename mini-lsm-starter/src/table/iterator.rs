@@ -32,7 +32,7 @@ pub struct SsTableIterator {
 impl SsTableIterator {
     /// Create a new iterator and seek to the first key-value pair in the first data block.
     pub fn create_and_seek_to_first(table: Arc<SsTable>) -> Result<Self> {
-        let block = table.read_block(0)?;
+        let block = table.read_block_cached(0)?;
         let blk_iter = BlockIterator::create_and_seek_to_first(block);
         let blk_idx = 0;
 
@@ -45,7 +45,7 @@ impl SsTableIterator {
 
     /// Seek to the first key-value pair in the first data block.
     pub fn seek_to_first(&mut self) -> Result<()> {
-        let block = self.table.read_block(0)?;
+        let block = self.table.read_block_cached(0)?;
         self.blk_iter = BlockIterator::create_and_seek_to_first(block);
         self.blk_idx = 0;
         Ok(())
@@ -53,12 +53,16 @@ impl SsTableIterator {
 
     /// Create a new iterator and seek to the first key-value pair which >= `key`.
     pub fn create_and_seek_to_key(table: Arc<SsTable>, key: KeySlice) -> Result<Self> {
-        let blk_idx = table.find_block_idx(key);
-        let block = table.read_block(blk_idx)?;
-        let blk_iter = BlockIterator::create_and_seek_to_key(block, key);
-        // FIX THIS. when this key doesnt exist in this block then go to next block ig (?)
-        if blk_iter.key() == KeyVec::from_vec(Vec::new()) {
+        let mut blk_idx = table.find_block_idx(key);
+        let mut block = table.read_block_cached(blk_idx)?;
+        let mut blk_iter = BlockIterator::create_and_seek_to_key(block, key);
+        if !blk_iter.is_valid() {
             blk_idx += 1;
+            if blk_idx >= table.num_of_blocks() {
+                return Err(anyhow::anyhow!("key not found"));
+            }
+            block = table.read_block_cached(blk_idx)?;
+            blk_iter = BlockIterator::create_and_seek_to_first(block);
         }
 
         Ok(SsTableIterator {
@@ -72,9 +76,19 @@ impl SsTableIterator {
     /// Note: You probably want to review the handout for detailed explanation when implementing
     /// this function.
     pub fn seek_to_key(&mut self, key: KeySlice) -> Result<()> {
-        let blk_idx = self.table.find_block_idx(key);
-        let block = self.table.read_block(blk_idx)?;
+        self.blk_idx = self.table.find_block_idx(key);
+        let mut block = self.table.read_block_cached(self.blk_idx)?;
         self.blk_iter = BlockIterator::create_and_seek_to_key(block, key);
+        if !self.blk_iter.is_valid() {
+            self.blk_idx += 1;
+
+            if self.blk_idx >= self.table.num_of_blocks() {
+                return Ok(());
+            }
+
+            block = self.table.read_block_cached(self.blk_idx)?;
+            self.blk_iter = BlockIterator::create_and_seek_to_first(block);
+        }
 
         Ok(())
     }
@@ -104,6 +118,17 @@ impl StorageIterator for SsTableIterator {
         if !self.is_valid() {
             return Err(anyhow::anyhow!("iterator has errored"));
         }
-        Ok(self.blk_iter.next())
+        self.blk_iter.next();
+        if self.blk_iter.is_valid() {
+            return Ok(());
+        }
+        self.blk_idx += 1;
+
+        if self.blk_idx >= self.table.num_of_blocks() {
+            return Ok(());
+        }
+        let block = self.table.read_block_cached(self.blk_idx)?;
+        self.blk_iter = BlockIterator::create_and_seek_to_first(block);
+        Ok(())
     }
 }
